@@ -1,0 +1,60 @@
+name: Update Kill Monster statistics
+on:
+  schedule:
+    - cron: '0 11 * * *'
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: killmonster-update
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Update once or retry a failed daily attempt
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            python3 update_statistics.py manual
+          elif [ "$EVENT_SCHEDULE" = "0 12 * * *" ]; then
+            python3 update_statistics.py retry
+          else
+            python3 update_statistics.py daily
+          fi
+      - name: Save validated data and availability status
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html update-status.json
+          if [ -f killstatistics.json ]; then git add killstatistics.json; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "Update statistics and availability status"
+            git push origin HEAD:main
+          fi
+      - name: Prepare website
+        run: |
+          mkdir -p _site
+          cp index.html _site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    needs: update
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
