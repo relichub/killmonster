@@ -1,4 +1,4 @@
-name: Test TibiaRelic kill statistics
+name: Test TibiaRelic kill statistics API
 
 on:
   workflow_dispatch:
@@ -12,70 +12,66 @@ permissions:
 jobs:
   check-source:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 3
     steps:
-      - name: Install public browser testing tools
-        run: |
-          python3 -m pip install playwright
-          python3 -m playwright install --with-deps chromium
-      - name: Read the public kill statistics table
+      - name: Make one request to the supplied public API
         run: |
           python3 - <<'PY'
           import json
           import os
+          import urllib.request
+          import urllib.error
           from datetime import datetime, timezone
           from pathlib import Path
-          from playwright.sync_api import sync_playwright
 
-          url = 'https://www.tibiarelic.com/kill-statistics'
-          result = {'source': url, 'checked_at': datetime.now(timezone.utc).isoformat(), 'success': False}
-          error = None
-          with sync_playwright() as p:
-              browser = p.chromium.launch()
-              page = browser.new_page(viewport={'width': 1440, 'height': 1000})
-              try:
-                  response = page.goto(url, wait_until='domcontentloaded', timeout=60000)
-                  result['http_status'] = response.status if response else None
-                  if response and response.status >= 400:
-                      raise RuntimeError('Source returned HTTP ' + str(response.status))
-                  page.wait_for_function("document.querySelectorAll('table tbody tr').length > 3", timeout=60000)
-                  rows = page.locator('table tbody tr').evaluate_all('(rows) => rows.map(row => Array.from(row.querySelectorAll("td")).map(cell => cell.innerText.trim())).filter(row => row.length === 7)')
-                  if not rows:
-                      rows = page.locator('table tr').evaluate_all('(rows) => rows.map(row => Array.from(row.querySelectorAll("td")).map(cell => cell.innerText.trim())).filter(row => row.length === 7)')
-                  valid = [row for row in rows if row[0] and all(value.replace(',', '').replace('.', '').replace(' ', '').isdigit() for value in row[1:])]
-                  if len(valid) < 10:
-                      raise RuntimeError('Expected at least 10 rows with a name and six numeric counts; found ' + str(len(valid)))
-                  result.update(success=True, row_count=len(valid), columns=['race', 'last_day_killed_players', 'last_day_killed_by_players', 'last_week_killed_players', 'last_week_killed_by_players', 'overall_killed_players', 'overall_killed_by_players'], rows=valid)
-                  print('SUCCESS: public table loaded; ' + str(len(valid)) + ' valid creature rows.')
-                  print(json.dumps({'http_status': result['http_status'], 'row_count': len(valid), 'sample': valid[:3]}, indent=2))
-              except Exception as exc:
-                  error = str(exc)
-                  result['error'] = error
-                  result['page_title'] = page.title()
-                  result['visible_text_sample'] = page.locator('body').inner_text()[:2000]
-                  print('SOURCE TEST FAILED: ' + error)
-              finally:
-                  page.screenshot(path='source-check.png', full_page=False)
-                  Path('source-check.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
-                  summary = '## TibiaRelic source test\n\n' + ('Table read successfully.' if result['success'] else 'The source could not be read.') + '\n\n'
-                  summary += '- HTTP status: ' + str(result.get('http_status')) + '\n'
-                  summary += '- Valid rows: ' + str(result.get('row_count', 0)) + '\n'
-                  summary += '- Checked at: ' + result['checked_at'] + '\n'
-                  if error:
-                      summary += '- Error: ' + error.replace('\n', ' ') + '\n'
-                  with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
-                      output.write(summary)
-                  browser.close()
-          if not result['success']:
+          url = 'https://api.tibiarelic.com/api/killstatistics?worldname=relic'
+          report = {'source': url, 'checked_at': datetime.now(timezone.utc).isoformat(), 'success': False, 'requests': 1}
+          try:
+              request = urllib.request.Request(url, headers={'Accept': 'application/json', 'User-Agent': 'RelicHub-killmonster-source-test/1.0'})
+              with urllib.request.urlopen(request, timeout=45) as response:
+                  report['http_status'] = response.status
+                  raw = response.read(5000000)
+              data = json.loads(raw)
+              if not isinstance(data, (dict, list)) or not data:
+                  raise ValueError('Expected nonempty JSON data')
+              Path('killstatistics.json').write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+              lists = []
+              def inspect(value, path='root', depth=0):
+                  if isinstance(value, list):
+                      lists.append((path, value))
+                  elif isinstance(value, dict) and depth < 4:
+                      for key, child in value.items():
+                          inspect(child, path + '.' + key, depth + 1)
+              inspect(data)
+              path, rows = max(lists, key=lambda pair: len(pair[1])) if lists else ('root', [])
+              if len(rows) < 10:
+                  raise ValueError('JSON received, but no usable creature table was identified')
+              report.update(success=True, json_type=type(data).__name__, bytes=len(raw), record_path=path, record_count=len(rows), sample=rows[:2], top_level_keys=list(data.keys())[:20] if isinstance(data, dict) else [])
+              print(json.dumps(report, ensure_ascii=False, indent=2))
+          except urllib.error.HTTPError as error:
+              report.update(http_status=error.code, error=str(error), retry_after=error.headers.get('Retry-After'))
+              print(json.dumps(report, indent=2))
+          except Exception as error:
+              report['error'] = str(error)
+              print(json.dumps(report, indent=2))
+          finally:
+              Path('api-test-report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+              summary = ['## Direct TibiaRelic API test', '', 'Result: ' + ('SUCCESS' if report['success'] else 'FAILED'), '', '- Requests: 1', '- HTTP status: ' + str(report.get('http_status')), '- Creature records: ' + str(report.get('record_count', 0)), '- Checked at: ' + report['checked_at']]
+              if report.get('error'):
+                  summary.append('- Error: ' + report['error'])
+              if report.get('success'):
+                  summary += ['', 'JSON path: ' + report['record_path'], '', 'Sample:', '', '```json', json.dumps(report.get('sample', []), ensure_ascii=False, indent=2), '```']
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
+                  output.write(chr(10).join(summary))
+          if not report['success']:
               raise SystemExit(1)
           PY
-      - name: Save test evidence
+      - name: Save API test data
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tibiarelic-source-test
+          name: tibiarelic-api-test
           path: |
-            source-check.json
-            source-check.png
-          if-no-files-found: warn
+            api-test-report.json
+            killstatistics.json
           retention-days: 7
