@@ -4,6 +4,11 @@ on:
     - cron: '0 11 * * *'
     - cron: '0 12 * * *'
   workflow_dispatch:
+    inputs:
+      sync_only:
+        description: Forward saved data only (no TibiaRelic request)
+        type: boolean
+        default: true
 permissions:
   contents: write
   pages: write
@@ -21,10 +26,13 @@ jobs:
           ref: main
       - name: Update once or retry a failed daily attempt
         env:
+          SYNC_ONLY: ${{ inputs.sync_only }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SCHEDULE: ${{ github.event.schedule }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$SYNC_ONLY" = "true" ]; then
+            echo "Reusing the saved snapshot. No TibiaRelic API request."
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             python3 update_statistics.py manual
           elif [ "$EVENT_SCHEDULE" = "0 12 * * *" ]; then
             python3 update_statistics.py retry
@@ -41,6 +49,12 @@ jobs:
             git commit -m "Update statistics and availability status"
             git push origin HEAD:main
           fi
+      - name: Deliver saved data to private Amigos database
+        id: amigos_delivery
+        continue-on-error: true
+        env:
+          AMIGOS_SYNC_KEY: ${{ secrets.AMIGOS_SYNC_KEY }}
+        run: python3 sync_amigos.py
       - name: Prepare website
         run: |
           mkdir -p _site
