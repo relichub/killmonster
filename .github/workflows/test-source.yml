@@ -1,0 +1,81 @@
+name: Test TibiaRelic kill statistics
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/test-source.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install public browser testing tools
+        run: |
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+      - name: Read the public kill statistics table
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
+
+          url = 'https://www.tibiarelic.com/kill-statistics'
+          result = {'source': url, 'checked_at': datetime.now(timezone.utc).isoformat(), 'success': False}
+          error = None
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              page = browser.new_page(viewport={'width': 1440, 'height': 1000})
+              try:
+                  response = page.goto(url, wait_until='domcontentloaded', timeout=60000)
+                  result['http_status'] = response.status if response else None
+                  if response and response.status >= 400:
+                      raise RuntimeError('Source returned HTTP ' + str(response.status))
+                  page.wait_for_function("document.querySelectorAll('table tbody tr').length > 3", timeout=60000)
+                  rows = page.locator('table tbody tr').evaluate_all('(rows) => rows.map(row => Array.from(row.querySelectorAll("td")).map(cell => cell.innerText.trim())).filter(row => row.length === 7)')
+                  if not rows:
+                      rows = page.locator('table tr').evaluate_all('(rows) => rows.map(row => Array.from(row.querySelectorAll("td")).map(cell => cell.innerText.trim())).filter(row => row.length === 7)')
+                  valid = [row for row in rows if row[0] and all(value.replace(',', '').replace('.', '').replace(' ', '').isdigit() for value in row[1:])]
+                  if len(valid) < 10:
+                      raise RuntimeError('Expected at least 10 rows with a name and six numeric counts; found ' + str(len(valid)))
+                  result.update(success=True, row_count=len(valid), columns=['race', 'last_day_killed_players', 'last_day_killed_by_players', 'last_week_killed_players', 'last_week_killed_by_players', 'overall_killed_players', 'overall_killed_by_players'], rows=valid)
+                  print('SUCCESS: public table loaded; ' + str(len(valid)) + ' valid creature rows.')
+                  print(json.dumps({'http_status': result['http_status'], 'row_count': len(valid), 'sample': valid[:3]}, indent=2))
+              except Exception as exc:
+                  error = str(exc)
+                  result['error'] = error
+                  result['page_title'] = page.title()
+                  result['visible_text_sample'] = page.locator('body').inner_text()[:2000]
+                  print('SOURCE TEST FAILED: ' + error)
+              finally:
+                  page.screenshot(path='source-check.png', full_page=False)
+                  Path('source-check.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+                  summary = '## TibiaRelic source test\n\n' + ('Table read successfully.' if result['success'] else 'The source could not be read.') + '\n\n'
+                  summary += '- HTTP status: ' + str(result.get('http_status')) + '\n'
+                  summary += '- Valid rows: ' + str(result.get('row_count', 0)) + '\n'
+                  summary += '- Checked at: ' + result['checked_at'] + '\n'
+                  if error:
+                      summary += '- Error: ' + error.replace('\n', ' ') + '\n'
+                  with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
+                      output.write(summary)
+                  browser.close()
+          if not result['success']:
+              raise SystemExit(1)
+          PY
+      - name: Save test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tibiarelic-source-test
+          path: |
+            source-check.json
+            source-check.png
+          if-no-files-found: warn
+          retention-days: 7
