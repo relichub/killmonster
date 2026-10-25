@@ -37,7 +37,7 @@ jobs:
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             python3 update_statistics.py manual
           elif [ "$EVENT_SCHEDULE" = "17 12 * * *" ]; then
-            python3 update_statistics.py retry
+            python3 -c 'import json; import update_statistics as u; p=u.ROOT/"update-status.json"; s=json.loads(p.read_text()) if p.exists() else {}; today=(u.now()-u.timedelta(hours=3)).date().isoformat(); u.run("retry" if s.get("day")==today and s.get("attempts",0)>=1 else "daily")'
           else
             python3 update_statistics.py daily
           fi
