@@ -3,8 +3,6 @@ on:
   schedule:
     - cron: '17 11 * * *'
     - cron: '17 12 * * *'
-    # Temporary scheduled verification; remove after observing the run.
-    - cron: '24 12 25 10 *'
   workflow_dispatch:
     inputs:
       sync_only:
