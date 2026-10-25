@@ -1,8 +1,10 @@
 name: Update Kill Monster statistics
 on:
   schedule:
-    - cron: '0 11 * * *'
-    - cron: '0 12 * * *'
+    - cron: '17 11 * * *'
+    - cron: '17 12 * * *'
+    # Temporary scheduled verification; remove after observing the run.
+    - cron: '24 12 25 10 *'
   workflow_dispatch:
     inputs:
       sync_only:
@@ -34,7 +36,7 @@ jobs:
             echo "Reusing the saved snapshot. No TibiaRelic API request."
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             python3 update_statistics.py manual
-          elif [ "$EVENT_SCHEDULE" = "0 12 * * *" ]; then
+          elif [ "$EVENT_SCHEDULE" = "17 12 * * *" ]; then
             python3 update_statistics.py retry
           else
             python3 update_statistics.py daily
