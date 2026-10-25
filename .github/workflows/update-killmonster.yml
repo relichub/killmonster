@@ -3,6 +3,8 @@ on:
   schedule:
     - cron: '17 11 * * *'
     - cron: '17 12 * * *'
+    # Temporary test: 2026-10-25 13:02 UTC. Remove after verification.
+    - cron: '2 13 25 10 *'
   workflow_dispatch:
     inputs:
       sync_only:
@@ -34,6 +36,13 @@ jobs:
             echo "Reusing the saved snapshot. No TibiaRelic API request."
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             python3 update_statistics.py manual
+          elif [ "$EVENT_SCHEDULE" = "2 13 25 10 *" ]; then
+            if [ "$(date -u +%F)" = "2026-10-25" ]; then
+              echo "Scheduled verification: one real TibiaRelic API request."
+              python3 update_statistics.py manual
+            else
+              echo "Temporary test expired; no API request."
+            fi
           elif [ "$EVENT_SCHEDULE" = "17 12 * * *" ]; then
             python3 -c 'import json; import update_statistics as u; p=u.ROOT/"update-status.json"; s=json.loads(p.read_text()) if p.exists() else {}; today=(u.now()-u.timedelta(hours=3)).date().isoformat(); u.run("retry" if s.get("day")==today and s.get("attempts",0)>=1 else "daily")'
           else
