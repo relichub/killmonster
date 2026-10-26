@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - index.html
+      - site.css
+      - statistics.js
+      - enhancements.js
+      - 'assets/**'
       - .github/workflows/publish-site.yml
 permissions:
   contents: read
@@ -26,6 +30,10 @@ jobs:
         run: |
           mkdir -p _site
           cp index.html _site/index.html
+          for file in site.css statistics.js enhancements.js; do
+            if [ -f "$file" ]; then cp "$file" _site/; fi
+          done
+          if [ -d assets ]; then cp -R assets _site/assets; fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
