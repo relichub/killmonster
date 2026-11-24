@@ -25,7 +25,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Prepare static website only
         run: |
           mkdir -p _site
@@ -34,9 +34,10 @@ jobs:
             if [ -f "$file" ]; then cp "$file" _site/; fi
           done
           if [ -d assets ]; then cp -R assets _site/assets; fi
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
       - name: Deploy website
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
+
