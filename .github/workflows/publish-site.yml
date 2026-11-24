@@ -50,7 +50,7 @@ jobs:
             if (!/^\d+$/.test(artifactId || '')) throw new Error('Upload did not return an artifact ID');
             const created = await github.request('POST /repos/{owner}/{repo}/pages/deployments', {
               ...context.repo,
-              artifact_id: artifactId,
+              artifact_id: Number(artifactId),
               pages_build_version: context.sha,
               oidc_token: await core.getIDToken()
             });
@@ -68,4 +68,5 @@ jobs:
               await new Promise(resolve => setTimeout(resolve, 2000));
             }
             throw new Error('Website deployment did not finish within three minutes');
+
 
