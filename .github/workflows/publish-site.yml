@@ -34,10 +34,38 @@ jobs:
             if [ -f "$file" ]; then cp "$file" _site/; fi
           done
           if [ -d assets ]; then cp -R assets _site/assets; fi
-      - uses: actions/upload-pages-artifact@v5
+      - id: artifact
+        uses: actions/upload-pages-artifact@v5
         with:
           path: _site
-      - name: Deploy website
+
+      - name: Deploy website using uploaded artifact ID
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/github-script@v9
+        env:
+          PAGES_ARTIFACT_ID: ${{ steps.artifact.outputs.artifact_id }}
+        with:
+          script: |
+            const artifactId = process.env.PAGES_ARTIFACT_ID;
+            if (!/^\d+$/.test(artifactId || '')) throw new Error('Upload did not return an artifact ID');
+            const created = await github.request('POST /repos/{owner}/{repo}/pages/deployments', {
+              ...context.repo,
+              artifact_id: artifactId,
+              pages_build_version: context.sha,
+              oidc_token: await core.getIDToken()
+            });
+            core.setOutput('page_url', created.data.page_url);
+            for (let attempt = 0; attempt < 90; attempt++) {
+              const response = await github.request('GET /repos/{owner}/{repo}/pages/deployments/{deploymentId}', {
+                ...context.repo,
+                deploymentId: created.data.id
+              });
+              const status = response.data.status;
+              if (status === 'succeed') { core.info('Website deployment completed'); return; }
+              if (['deployment_failed', 'deployment_content_failed', 'deployment_cancelled', 'deployment_lost'].includes(status)) {
+                throw new Error('Website deployment failed: ' + status);
+              }
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            throw new Error('Website deployment did not finish within three minutes');
 
